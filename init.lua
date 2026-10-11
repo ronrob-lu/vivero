@@ -79,6 +79,35 @@ local function is_replaceable(nodename)
 	return false
 end
 
+-- Helper function to check if a node is liquid (water or lava)
+local function is_liquid(nodename)
+	if not nodename or nodename == "air" or nodename == "ignore" then
+		return false
+	end
+	if minetest.get_item_group(nodename, "water") > 0 or minetest.get_item_group(nodename, "lava") > 0 or minetest.get_item_group(nodename, "liquid") > 0 then
+		return true
+	end
+	local lower = string.lower(nodename)
+	if string.find(lower, "water") or string.find(lower, "lava") or string.find(lower, "liquid") then
+		return true
+	end
+	return false
+end
+
+-- Helper function to check if a node is a solid obstacle
+local function is_obstacle(nodename)
+	if not nodename or nodename == "air" or nodename == "ignore" then
+		return false
+	end
+	if is_replaceable(nodename) then
+		return false
+	end
+	if is_liquid(nodename) then
+		return false
+	end
+	return true
+end
+
 -- Check if location is suitable for planting a sapling
 -- Requirements:
 -- 1. Dirt/soil underneath
@@ -95,7 +124,7 @@ local function is_valid_planting_spot(pos)
 	end
 
 	local target_node = minetest.get_node_or_nil(rounded_pos)
-	if not target_node or not is_replaceable(target_node.name) then
+	if not target_node or not is_replaceable(target_node.name) or is_liquid(target_node.name) then
 		return false
 	end
 
@@ -212,8 +241,13 @@ minetest.register_entity("vivero:vivero_npc", {
 		                 (node_head and (minetest.get_item_group(node_head.name, "water") > 0 or string.find(node_head.name, "water")))
 
 		-- Set standard gravity or buoyancy acceleration
+		local head_submerged = node_head and (minetest.get_item_group(node_head.name, "water") > 0 or string.find(node_head.name, "water"))
 		if in_water then
-			self.object:set_acceleration({x = 0, y = -1.0, z = 0})
+			if head_submerged then
+				self.object:set_acceleration({x = 0, y = 2.0, z = 0})
+			else
+				self.object:set_acceleration({x = 0, y = -2.0, z = 0})
+			end
 		else
 			self.object:set_acceleration({x = 0, y = -9.81, z = 0})
 		end
@@ -238,12 +272,17 @@ minetest.register_entity("vivero:vivero_npc", {
 		-- Water buoyancy / swimming logic
 		local vel = self.object:get_velocity() or {x = 0, y = 0, z = 0}
 		if in_water then
-			-- NPC swims up naturally
-			vel.y = math.max(vel.y, 1.8)
+			if head_submerged then
+				vel.y = math.min(vel.y + dtime * 5.0, 1.2)
+			else
+				if vel.y < -0.2 then
+					vel.y = -0.2
+				end
+			end
 			self.object:set_velocity(vel)
 
 			-- Drowning if submerged
-			if node_head and (minetest.get_item_group(node_head.name, "water") > 0 or string.find(node_head.name, "water")) then
+			if head_submerged then
 				self.submerged_air = self.submerged_air - dtime
 				if self.submerged_air <= 0 and self.damage_timer <= 0 then
 					self.damage_timer = 1.0
@@ -330,6 +369,9 @@ minetest.register_entity("vivero:vivero_npc", {
 			self.object:set_velocity({x = 0, y = vel.y, z = 0})
 		elseif self.state == "walk" or self.state == "run" then
 			local move_speed = (self.state == "run") and 3.5 or 2.0
+			if in_water then
+				move_speed = move_speed * 0.6
+			end
 			local anim_speed = (self.state == "run") and 40 or 25
 			self:set_animation(self.state, anim_speed)
 
@@ -345,10 +387,10 @@ minetest.register_entity("vivero:vivero_npc", {
 			}
 			local front_node = minetest.get_node_or_nil(front_pos)
 
-			if front_node and front_node.name ~= "air" and not is_replaceable(front_node.name) then
+			if front_node and is_obstacle(front_node.name) then
 				-- Check block above front node
 				local front_above = minetest.get_node_or_nil({x = front_pos.x, y = pos.y + 1.5, z = front_pos.z})
-				if not front_above or front_above.name == "air" or is_replaceable(front_above.name) then
+				if not front_above or not is_obstacle(front_above.name) then
 					-- Jump over 1-block height obstacle
 					vel.y = 5.0
 				else
