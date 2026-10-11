@@ -23,6 +23,55 @@ local function is_valid_sapling(nodename)
 	return true
 end
 
+-- Helper function to check if a node is solid walkable land (not air, liquid, or non-walkable)
+local function is_land_node(nodename)
+	if not nodename or nodename == "air" or nodename == "ignore" then
+		return false
+	end
+	if is_liquid(nodename) then
+		return false
+	end
+	local def = minetest.registered_nodes[nodename]
+	if def and def.walkable ~= false and not def.buildable_to then
+		return true
+	end
+	return false
+end
+
+-- Helper function to find the nearest solid dry land node near the NPC
+local function find_nearest_land(pos, max_radius)
+	local rounded_pos = vector.round(pos)
+	local best_pos = nil
+	local best_dist_sq = math.huge
+
+	for r = 1, max_radius do
+		for dx = -r, r do
+			for dz = -r, r do
+				if math.abs(dx) == r or math.abs(dz) == r then
+					for dy = -1, 2 do
+						local chk_pos = {x = rounded_pos.x + dx, y = rounded_pos.y + dy, z = rounded_pos.z + dz}
+						local node = minetest.get_node_or_nil(chk_pos)
+						if node and is_land_node(node.name) then
+							local above_node = minetest.get_node_or_nil({x = chk_pos.x, y = chk_pos.y + 1, z = chk_pos.z})
+							if above_node and not is_land_node(above_node.name) and not is_liquid(above_node.name) then
+								local dist_sq = dx * dx + dz * dz + dy * dy
+								if dist_sq < best_dist_sq then
+									best_dist_sq = dist_sq
+									best_pos = chk_pos
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+		if best_pos then
+			return best_pos
+		end
+	end
+	return nil
+end
+
 -- Dynamically find all registered nodes that have "sapling" in their item name (excluding potted variants)
 minetest.register_on_mods_loaded(function()
 	vivero.registered_saplings = {}
@@ -327,8 +376,8 @@ minetest.register_entity("vivero:vivero_npc", {
 			return
 		end
 
-		-- Try planting if cooldown is ready and position is good
-		if self.plant_cooldown <= 0 and is_valid_planting_spot(pos) then
+		-- Try planting if cooldown is ready, position is good, and not in water
+		if not in_water and self.plant_cooldown <= 0 and is_valid_planting_spot(pos) then
 			self.state = "plant"
 			self.state_timer = 1.2
 			self:set_animation("plant", 20)
@@ -336,20 +385,41 @@ minetest.register_entity("vivero:vivero_npc", {
 			return
 		end
 
-		-- State switching
-		if self.state_timer <= 0 then
-			local r = math.random()
-			if r < 0.3 then
-				self.state = "idle"
-				self.state_timer = math.random(2, 6)
-			elseif r < 0.8 then
-				self.state = "walk"
-				self.state_timer = math.random(4, 10)
-				self.target_yaw = math.random() * math.pi * 2
+		-- Water escape AI: if in water, actively seek nearest dry land
+		if in_water then
+			local land_pos = find_nearest_land(pos, 5)
+			if land_pos then
+				local dx = land_pos.x - pos.x
+				local dz = land_pos.z - pos.z
+				self.target_yaw = math.atan2(-dx, dz)
+				if self.state == "idle" then
+					self.state = "walk"
+					self.state_timer = 2.0
+				end
 			else
-				self.state = "run"
-				self.state_timer = math.random(3, 7)
-				self.target_yaw = math.random() * math.pi * 2
+				-- If no land is near, turn around and try swimming in new direction
+				if self.state_timer <= 0 then
+					self.target_yaw = math.random() * math.pi * 2
+					self.state = "walk"
+					self.state_timer = math.random(3, 6)
+				end
+			end
+		else
+			-- Normal state switching on land
+			if self.state_timer <= 0 then
+				local r = math.random()
+				if r < 0.3 then
+					self.state = "idle"
+					self.state_timer = math.random(2, 6)
+				elseif r < 0.8 then
+					self.state = "walk"
+					self.state_timer = math.random(4, 10)
+					self.target_yaw = math.random() * math.pi * 2
+				else
+					self.state = "run"
+					self.state_timer = math.random(3, 7)
+					self.target_yaw = math.random() * math.pi * 2
+				end
 			end
 		end
 
@@ -379,7 +449,31 @@ minetest.register_entity("vivero:vivero_npc", {
 			local dir_x = -math.sin(self.yaw)
 			local dir_z = math.cos(self.yaw)
 
-			-- Obstacle detection & auto-jump
+			-- Water / liquid avoidance when on land
+			if not in_water then
+				local check_dist = 0.8
+				local front_pos_head = { x = pos.x + dir_x * check_dist, y = pos.y + 0.5, z = pos.z + dir_z * check_dist }
+				local front_pos_feet = { x = pos.x + dir_x * check_dist, y = pos.y + 0.1, z = pos.z + dir_z * check_dist }
+				local front_pos_ground = { x = pos.x + dir_x * check_dist, y = pos.y - 0.5, z = pos.z + dir_z * check_dist }
+
+				local node_head_f = minetest.get_node_or_nil(front_pos_head)
+				local node_feet_f = minetest.get_node_or_nil(front_pos_feet)
+				local node_ground_f = minetest.get_node_or_nil(front_pos_ground)
+
+				local liquid_ahead = (node_head_f and is_liquid(node_head_f.name)) or
+				                     (node_feet_f and is_liquid(node_feet_f.name)) or
+				                     (node_ground_f and is_liquid(node_ground_f.name))
+
+				if liquid_ahead then
+					-- Water hazard ahead on land: turn away immediately
+					self.target_yaw = self.yaw + math.pi + (math.random() - 0.5) * 1.5
+					self.state = "walk"
+					self.state_timer = math.random(2, 4)
+					move_speed = 0
+				end
+			end
+
+			-- Obstacle detection & auto-jump / climbing out of water
 			local front_pos = {
 				x = pos.x + dir_x * 0.7,
 				y = pos.y + 0.5,
@@ -387,16 +481,22 @@ minetest.register_entity("vivero:vivero_npc", {
 			}
 			local front_node = minetest.get_node_or_nil(front_pos)
 
-			if front_node and is_obstacle(front_node.name) then
+			if front_node and (is_obstacle(front_node.name) or (in_water and is_land_node(front_node.name))) then
 				-- Check block above front node
 				local front_above = minetest.get_node_or_nil({x = front_pos.x, y = pos.y + 1.5, z = front_pos.z})
 				if not front_above or not is_obstacle(front_above.name) then
-					-- Jump over 1-block height obstacle
+					-- Jump over 1-block height obstacle / climb shore out of water
 					vel.y = 5.0
 				else
 					-- Wall ahead too high, change direction
 					self.target_yaw = self.target_yaw + math.pi + (math.random() - 0.5)
 					self.state_timer = math.random(2, 5)
+				end
+			elseif in_water then
+				-- Extra jump boost if in water approaching land close by
+				local land_pos = find_nearest_land(pos, 2)
+				if land_pos then
+					vel.y = math.max(vel.y, 4.5)
 				end
 			end
 
