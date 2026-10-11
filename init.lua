@@ -5,10 +5,29 @@ vivero = vivero or {}
 vivero.registered_saplings = {}
 
 -- Dynamically find all registered nodes that have "sapling" in their item name
+-- Helper function to check if a node name represents a valid plantable sapling (excluding potted saplings)
+local function is_valid_sapling(nodename)
+	if not nodename or not string.find(nodename, "sapling") then
+		return false
+	end
+	local lower = string.lower(nodename)
+	if string.find(lower, "pot") or string.find(lower, "potted") then
+		return false
+	end
+	if minetest.get_item_group(nodename, "flowerpot") > 0 or
+	   minetest.get_item_group(nodename, "potted") > 0 or
+	   minetest.get_item_group(nodename, "pot") > 0 or
+	   minetest.get_item_group(nodename, "potted_node") > 0 then
+		return false
+	end
+	return true
+end
+
+-- Dynamically find all registered nodes that have "sapling" in their item name (excluding potted variants)
 minetest.register_on_mods_loaded(function()
 	vivero.registered_saplings = {}
 	for name, def in pairs(minetest.registered_nodes) do
-		if string.find(name, "sapling") then
+		if is_valid_sapling(name) then
 			table.insert(vivero.registered_saplings, name)
 		end
 	end
@@ -98,7 +117,7 @@ local function is_valid_planting_spot(pos)
 						if name ~= "air" and not is_replaceable(name) then
 							-- Allow leaves or saplings, but block solid trunk/stone structures
 							local is_leaves = string.find(name, "leaves") or string.find(name, "leaf")
-							local is_sapling = string.find(name, "sapling")
+							local is_sapling = is_valid_sapling(name)
 							if not is_leaves and not is_sapling then
 								return false
 							end
