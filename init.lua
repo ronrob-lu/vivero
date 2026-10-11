@@ -23,6 +23,65 @@ local function is_valid_sapling(nodename)
 	return true
 end
 
+-- Helper function to check if a node is liquid (water or lava)
+local function is_liquid(nodename)
+	if not nodename or nodename == "air" or nodename == "ignore" then
+		return false
+	end
+	if minetest.get_item_group(nodename, "water") > 0 or minetest.get_item_group(nodename, "lava") > 0 or minetest.get_item_group(nodename, "liquid") > 0 then
+		return true
+	end
+	local lower = string.lower(nodename)
+	if string.find(lower, "water") or string.find(lower, "lava") or string.find(lower, "liquid") then
+		return true
+	end
+	return false
+end
+
+-- Helper function to check if a node is soil/dirt
+local function is_soil(nodename)
+	if not nodename or nodename == "air" or nodename == "ignore" then
+		return false
+	end
+	if minetest.get_item_group(nodename, "soil") > 0 then
+		return true
+	end
+	if minetest.get_item_group(nodename, "crumbly") > 0 then
+		return true
+	end
+	local lower = string.lower(nodename)
+	if string.find(lower, "dirt") or string.find(lower, "grass") or string.find(lower, "soil") then
+		return true
+	end
+	return false
+end
+
+-- Helper function to check if a node can be replaced by a sapling
+local function is_replaceable(nodename)
+	if not nodename or nodename == "air" then
+		return true
+	end
+	local def = minetest.registered_nodes[nodename]
+	if def and (def.buildable_to or def.drawtype == "airlike") then
+		return true
+	end
+	return false
+end
+
+-- Helper function to check if a node is a solid obstacle
+local function is_obstacle(nodename)
+	if not nodename or nodename == "air" or nodename == "ignore" then
+		return false
+	end
+	if is_replaceable(nodename) then
+		return false
+	end
+	if is_liquid(nodename) then
+		return false
+	end
+	return true
+end
+
 -- Helper function to check if a node is solid walkable land (not air, liquid, or non-walkable)
 local function is_land_node(nodename)
 	if not nodename or nodename == "air" or nodename == "ignore" then
@@ -96,65 +155,6 @@ function vivero.get_random_sapling()
 		return "mcl_core:sapling_oak"
 	end
 	return nil
-end
-
--- Helper function to check if a node is soil/dirt
-local function is_soil(nodename)
-	if not nodename or nodename == "air" or nodename == "ignore" then
-		return false
-	end
-	if minetest.get_item_group(nodename, "soil") > 0 then
-		return true
-	end
-	if minetest.get_item_group(nodename, "crumbly") > 0 then
-		return true
-	end
-	local lower = string.lower(nodename)
-	if string.find(lower, "dirt") or string.find(lower, "grass") or string.find(lower, "soil") then
-		return true
-	end
-	return false
-end
-
--- Helper function to check if a node can be replaced by a sapling
-local function is_replaceable(nodename)
-	if not nodename or nodename == "air" then
-		return true
-	end
-	local def = minetest.registered_nodes[nodename]
-	if def and (def.buildable_to or def.drawtype == "airlike") then
-		return true
-	end
-	return false
-end
-
--- Helper function to check if a node is liquid (water or lava)
-local function is_liquid(nodename)
-	if not nodename or nodename == "air" or nodename == "ignore" then
-		return false
-	end
-	if minetest.get_item_group(nodename, "water") > 0 or minetest.get_item_group(nodename, "lava") > 0 or minetest.get_item_group(nodename, "liquid") > 0 then
-		return true
-	end
-	local lower = string.lower(nodename)
-	if string.find(lower, "water") or string.find(lower, "lava") or string.find(lower, "liquid") then
-		return true
-	end
-	return false
-end
-
--- Helper function to check if a node is a solid obstacle
-local function is_obstacle(nodename)
-	if not nodename or nodename == "air" or nodename == "ignore" then
-		return false
-	end
-	if is_replaceable(nodename) then
-		return false
-	end
-	if is_liquid(nodename) then
-		return false
-	end
-	return true
 end
 
 -- Check if location is suitable for planting a sapling
